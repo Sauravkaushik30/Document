@@ -1,0 +1,7 @@
+streamlit==1.32.2
+pymupdf==1.25.3
+pillow==10.2.0
+pytesseract==0.3.10
+pypdf2==3.0.1
+python-magic==0.4.27
+twilio==8.8.0
