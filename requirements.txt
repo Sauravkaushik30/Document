@@ -1,8 +1,0 @@
-streamlit==1.30.0
-pymupdf==1.25.3
-pytesseract==0.3.10
-pillow==10.2.0
-opencv-python-headless==4.9.0.80
-numpy==1.24.2
-pypdf2==3.0.1
-python-magic==0.4.27
