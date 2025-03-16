@@ -1,0 +1,184 @@
+import streamlit as st
+import os
+import glob
+import fitz  # PyMuPDF
+import re
+import io
+from PIL import Image
+import pytesseract
+import PyPDF2
+import magic
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from twilio.rest import Client
+
+# ---------------- Configuration ----------------
+SENDER_EMAIL = "sfcgurgaon05@gmail.com "
+SENDER_PASSWORD = "xjat tyig vlhc tjcs"
+TWILIO_ACCOUNT_SID = "your-twilio-account-sid"
+TWILIO_AUTH_TOKEN = "your-twilio-auth-token"
+TWILIO_PHONE_NUMBER = "+1234567890"
+RECEIVER_PHONE_NUMBER = "+919876543210"
+
+# ---------------- Regular Expressions ----------------
+aadhaar_pattern = re.compile(r"\b\d{4}\s?\d{4}\s?\d{4}\b")
+pan_pattern = re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b")
+
+# ---------------- Utility Functions ----------------
+def extract_pii(text):
+    aadhaar_matches = aadhaar_pattern.findall(text)
+    pan_matches = pan_pattern.findall(text)
+    return aadhaar_matches, pan_matches
+
+def extract_text_using_fitz(pdf_path):
+    try:
+        doc = fitz.open(pdf_path)
+        text = ""
+        for page in doc:
+            text += page.get_text()
+        return text.strip()
+    except Exception as e:
+        st.error(f"Error extracting text using fitz: {e}")
+        return ""
+
+def extract_text_using_pypdf2(pdf_path):
+    try:
+        reader = PyPDF2.PdfReader(pdf_path)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() or ""
+        return text.strip()
+    except Exception as e:
+        st.error(f"Error extracting text using PyPDF2: {e}")
+        return ""
+
+def extract_text_using_ocr(pdf_path):
+    try:
+        doc = fitz.open(pdf_path)
+        text = ""
+        for page in doc:
+            pix = page.get_pixmap()
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            ocr_text = pytesseract.image_to_string(img)
+            text += ocr_text
+        return text.strip()
+    except Exception as e:
+        st.error(f"OCR failed: {e}")
+        return ""
+
+def extract_text_from_pdf(pdf_path):
+    text = extract_text_using_fitz(pdf_path)
+    if text:
+        return text
+    text = extract_text_using_pypdf2(pdf_path)
+    if text:
+        return text
+    return extract_text_using_ocr(pdf_path)
+
+def send_email(subject, body, receiver_email):
+    try:
+        if not receiver_email:
+            st.error("Receiver email is required to send notifications.")
+            return
+        
+        msg = MIMEMultipart()
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = receiver_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+        
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(SENDER_EMAIL, SENDER_PASSWORD)
+        server.sendmail(SENDER_EMAIL, receiver_email, msg.as_string())
+        server.quit()
+        st.success(f"📧 Email sent to {receiver_email}")
+    except Exception as e:
+        st.error(f"Failed to send email: {e}")
+
+def send_sms(message):
+    try:
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        message = client.messages.create(
+            body=message,
+            from_=TWILIO_PHONE_NUMBER,
+            to=RECEIVER_PHONE_NUMBER
+        )
+        st.success(f"📱 SMS sent to {RECEIVER_PHONE_NUMBER}")
+    except Exception as e:
+        st.error(f"Failed to send SMS: {e}")
+
+def process_file(file_path, receiver_email):
+    file_type = magic.Magic(mime=True).from_file(file_path)
+    
+    if file_type in ["application/pdf", "text/plain"]:
+        text = extract_text_from_pdf(file_path) if file_type == "application/pdf" else open(file_path, 'r', encoding='utf-8', errors='ignore').read()
+        
+        aadhaar_matches, pan_matches = extract_pii(text)
+        if aadhaar_matches or pan_matches:
+            message = f"Detected PII in file: {file_path}\n"
+            if aadhaar_matches:
+                message += f"Aadhaar: {', '.join(aadhaar_matches)}\n"
+            if pan_matches:
+                message += f"PAN: {', '.join(pan_matches)}\n"
+            
+            # Send email and SMS
+            send_email("PII Detected", message, receiver_email)
+            send_sms(message)
+            
+            return {
+                "file_path": file_path,
+                "aadhaar": aadhaar_matches,
+                "pan": pan_matches,
+                "text": text
+            }
+    return None
+
+# ---------------- Streamlit UI ----------------
+st.set_page_config(page_title="Document PII Extractor", layout="wide")
+st.title("📑 Document PII Extractor")
+st.markdown("### Scan an Entire Directory for Aadhaar and PAN Details")
+
+# Get directory path and email input from user
+directory_path = st.text_input("📂 Enter the directory path to scan:")
+receiver_email = st.text_input("📧 Enter the recipient email for notifications:")
+
+if st.button("🔍 Start Scanning"):
+    if not directory_path or not os.path.exists(directory_path):
+        st.error("Invalid directory path. Please enter a valid directory.")
+    elif not receiver_email:
+        st.error("Recipient email is required.")
+    else:
+        st.info(f"Scanning files in `{directory_path}`...")
+        
+        extracted_data = []
+        # Search for PDFs and TXTs in the directory
+        files = glob.glob(os.path.join(directory_path, '**/*.pdf'), recursive=True) + \
+                glob.glob(os.path.join(directory_path, '**/*.txt'), recursive=True)
+
+        if not files:
+            st.warning("No PDF or TXT files found in the directory.")
+        else:
+            for file_path in files:
+                result = process_file(file_path, receiver_email)
+                if result:
+                    extracted_data.append(result)
+
+            if extracted_data:
+                st.success(f"✅ Found PII in {len(extracted_data)} files:")
+                for data in extracted_data:
+                    st.markdown(f"**File:** `{data['file_path']}`")
+                    if data["aadhaar"]:
+                        st.markdown(f"✅ **Aadhaar:** {', '.join(data['aadhaar'])}")
+                    if data["pan"]:
+                        st.markdown(f"✅ **PAN:** {', '.join(data['pan'])}")
+                    with st.expander("🔎 View Extracted Text"):
+                        st.write(data["text"])
+            else:
+                st.warning("❌ No Aadhaar or PAN details found in scanned files.")
+
+# ---------------- Footer ----------------
+st.markdown("---")
+st.markdown("💡 Created with Streamlit")
+
