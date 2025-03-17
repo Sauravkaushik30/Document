@@ -13,7 +13,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # ---------------- Configuration ----------------
-SENDER_EMAIL = os.getenv("SENDER_EMAIL")
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")  # Use environment variables for security
 SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 
 # ---------------- Regular Expressions ----------------
@@ -140,17 +140,21 @@ st.markdown("### Scan an Entire Directory for Aadhaar and PAN Details")
 directory_path = st.text_input("📂 Enter the directory path to scan:")
 receiver_email = st.text_input("📧 Enter the recipient email for notifications:")
 
+# Fix for Windows paths (allow double backslashes or raw strings)
+if directory_path:
+    directory_path = os.path.normpath(directory_path)
+
 if st.button("🔍 Start Scanning"):
-    if not directory_path or not os.path.exists(directory_path):
+    if not directory_path or not os.path.isdir(directory_path):
         st.error("Invalid directory path. Please enter a valid directory.")
     elif not receiver_email:
         st.error("Recipient email is required.")
     else:
         st.info(f"Scanning files in `{directory_path}`...")
-        
+
         extracted_data = []
-        # Search for files in the directory
-        files = glob.glob(os.path.join(directory_path, '**/*'), recursive=True)
+        # Search for files in the directory (recursive)
+        files = glob.glob(os.path.join(directory_path, '**/*.*'), recursive=True)
 
         if not files:
             st.warning("No files found in the directory.")
@@ -176,3 +180,4 @@ if st.button("🔍 Start Scanning"):
 # ---------------- Footer ----------------
 st.markdown("---")
 st.markdown("💡 Created with Streamlit")
+
