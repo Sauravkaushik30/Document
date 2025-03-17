@@ -140,7 +140,6 @@ def scan_directory(directory, receiver_email):
         return extracted_data
 
     files = glob.glob(os.path.join(directory, '**/*.*'), recursive=True)
-
     if not files:
         st.warning("No files found in the directory.")
         return extracted_data
@@ -149,25 +148,15 @@ def scan_directory(directory, receiver_email):
         result = process_file(file_path, receiver_email)
         if result:
             extracted_data.append(result)
-
     return extracted_data
 
-# ---------------- Streamlit UI ----------------
-st.set_page_config(page_title="Document PII Extractor", layout="wide")
-st.title("📑 Document PII Extractor")
-st.markdown("### Scan an Entire Directory for Aadhaar and PAN Details")
-
-# Get directory path and email input from user
-directory_path = st.text_input("📂 Enter the directory path to scan:")
-receiver_email = st.text_input("📧 Enter the recipient email for notifications:")
-
-# Fix path issues
-if directory_path:
-    directory_path = os.path.normpath(directory_path)
-
-def start_rescan(interval, directory_path, receiver_email):
+def start_rescan(interval, directory, receiver_email):
     while True:
-        extracted_data = scan_directory(directory_path, receiver_email)
+        st.write("Scanning directory:", directory)
+        st.write("Current working directory:", os.getcwd())
+        st.write("os.path.isdir(directory):", os.path.isdir(directory))
+        
+        extracted_data = scan_directory(directory, receiver_email)
         if extracted_data:
             st.success(f"✅ Found PII in {len(extracted_data)} files.")
             for data in extracted_data:
@@ -182,6 +171,23 @@ def start_rescan(interval, directory_path, receiver_email):
             st.warning("❌ No Aadhaar or PAN details found in scanned files.")
         time.sleep(interval)
 
+# ---------------- Streamlit UI ----------------
+st.set_page_config(page_title="Document PII Extractor", layout="wide")
+st.title("📑 Document PII Extractor")
+st.markdown("### Scan an Entire Directory for Aadhaar and PAN Details")
+
+# Get directory path and email input from user
+directory_path = st.text_input("📂 Enter the directory path to scan:")
+receiver_email = st.text_input("📧 Enter the recipient email for notifications:")
+
+if directory_path:
+    # Remove extra spaces and normalize the path
+    directory_path = os.path.normpath(directory_path.strip())
+    st.write("Normalized directory path:", directory_path)
+    st.write("Does directory exist?", os.path.exists(directory_path))
+    st.write("Is it a directory?", os.path.isdir(directory_path))
+    st.write("Current working directory:", os.getcwd())
+
 if st.button("🔍 Start Scanning"):
     if not directory_path or not os.path.isdir(directory_path):
         st.error("Invalid directory path. Please enter a valid directory.")
@@ -190,8 +196,3 @@ if st.button("🔍 Start Scanning"):
     else:
         st.info(f"Starting scan on `{directory_path}` every 10 minutes...")
         threading.Thread(target=start_rescan, args=(600, directory_path, receiver_email), daemon=True).start()
-
-# ---------------- Footer ----------------
-st.markdown("---")
-st.markdown("💡 Created with Streamlit")
-
