@@ -1,6 +1,4 @@
 import streamlit as st
-import os
-import glob
 import fitz  # PyMuPDF
 import re
 import io
@@ -13,8 +11,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # ---------------- Configuration ----------------
-SENDER_EMAIL = os.getenv("sfcgurgaon05@gmail.com")
-SENDER_PASSWORD = os.getenv("xjat tyig vlhc tjcs")
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")
+SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 
 # ---------------- Regular Expressions ----------------
 aadhaar_pattern = re.compile(r"\b\d{4}\s?\d{4}\s?\d{4}\b")
@@ -26,9 +24,9 @@ def extract_pii(text):
     pan_matches = pan_pattern.findall(text)
     return aadhaar_matches, pan_matches
 
-def extract_text_using_fitz(pdf_path):
+def extract_text_using_fitz(pdf_stream):
     try:
-        doc = fitz.open(pdf_path)
+        doc = fitz.open(stream=pdf_stream, filetype="pdf")
         text = ""
         for page in doc:
             text += page.get_text()
@@ -37,9 +35,9 @@ def extract_text_using_fitz(pdf_path):
         st.error(f"Error extracting text using fitz: {e}")
         return ""
 
-def extract_text_using_pypdf2(pdf_path):
+def extract_text_using_pypdf2(pdf_stream):
     try:
-        reader = PyPDF2.PdfReader(pdf_path)
+        reader = PyPDF2.PdfReader(pdf_stream)
         text = ""
         for page in reader.pages:
             text += page.extract_text() or ""
@@ -48,9 +46,9 @@ def extract_text_using_pypdf2(pdf_path):
         st.error(f"Error extracting text using PyPDF2: {e}")
         return ""
 
-def extract_text_using_ocr(pdf_path):
+def extract_text_using_ocr(pdf_stream):
     try:
-        doc = fitz.open(pdf_path)
+        doc = fitz.open(stream=pdf_stream, filetype="pdf")
         text = ""
         for page in doc:
             pix = page.get_pixmap()
@@ -62,19 +60,19 @@ def extract_text_using_ocr(pdf_path):
         st.error(f"OCR failed: {e}")
         return ""
 
-def extract_text_from_pdf(pdf_path):
-    text = extract_text_using_fitz(pdf_path)
+def extract_text_from_pdf(pdf_stream):
+    text = extract_text_using_fitz(pdf_stream)
     if text:
         return text
-    text = extract_text_using_pypdf2(pdf_path)
+    text = extract_text_using_pypdf2(pdf_stream)
     if text:
         return text
-    return extract_text_using_ocr(pdf_path)
+    return extract_text_using_ocr(pdf_stream)
 
-def read_text_from_file(file_path):
+def read_text_from_file(file_stream):
     try:
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
-            return file.read().strip()
+        text = file_stream.read().decode("utf-8").strip()
+        return text
     except Exception as e:
         st.error(f"Error reading text file: {e}")
         return ""
@@ -100,13 +98,14 @@ def send_email(subject, body, receiver_email):
     except Exception as e:
         st.error(f"Failed to send email: {e}")
 
-def process_file(file_path, receiver_email):
-    file_type = magic.Magic(mime=True).from_file(file_path)
-    
+def process_file(file, receiver_email):
+    file_type = magic.Magic(mime=True).from_buffer(file.read(1024))
+    file.seek(0)  # Reset file pointer
+
     if file_type == "application/pdf":
-        text = extract_text_from_pdf(file_path)
+        text = extract_text_from_pdf(file)
     elif file_type.startswith("text/"):
-        text = read_text_from_file(file_path)
+        text = read_text_from_file(file)
     else:
         st.warning(f"Unsupported file type: {file_type}")
         return None
@@ -114,7 +113,7 @@ def process_file(file_path, receiver_email):
     if text:
         aadhaar_matches, pan_matches = extract_pii(text)
         if aadhaar_matches or pan_matches:
-            message = f"Detected PII in file: {file_path}\n"
+            message = f"Detected PII in uploaded file:\n"
             if aadhaar_matches:
                 message += f"Aadhaar: {', '.join(aadhaar_matches)}\n"
             if pan_matches:
@@ -124,7 +123,6 @@ def process_file(file_path, receiver_email):
             send_email("PII Detected", message, receiver_email)
             
             return {
-                "file_path": file_path,
                 "aadhaar": aadhaar_matches,
                 "pan": pan_matches,
                 "text": text
@@ -134,44 +132,31 @@ def process_file(file_path, receiver_email):
 # ---------------- Streamlit UI ----------------
 st.set_page_config(page_title="Document PII Extractor", layout="wide")
 st.title("📑 Document PII Extractor")
-st.markdown("### Scan an Entire Directory for Aadhaar and PAN Details")
+st.markdown("### Upload a File to Scan for Aadhaar and PAN Details")
 
-# Get directory path and email input from user
-directory_path = st.text_input("📂 Enter the directory path to scan:")
+# Get file upload and email input from user
+uploaded_file = st.file_uploader("📂 Upload a file to scan:", type=["pdf", "txt"])
 receiver_email = st.text_input("📧 Enter the recipient email for notifications:")
 
 if st.button("🔍 Start Scanning"):
-    if not directory_path or not os.path.exists(directory_path):
-        st.error("Invalid directory path. Please enter a valid directory.")
+    if not uploaded_file:
+        st.error("Please upload a file to scan.")
     elif not receiver_email:
         st.error("Recipient email is required.")
     else:
-        st.info(f"Scanning files in `{directory_path}`...")
-        
-        extracted_data = []
-        # Search for files in the directory
-        files = glob.glob(os.path.join(directory_path, '**/*'), recursive=True)
+        st.info("Scanning the uploaded file...")
+        result = process_file(uploaded_file, receiver_email)
 
-        if not files:
-            st.warning("No files found in the directory.")
+        if result:
+            st.success("✅ PII Detected in the uploaded file:")
+            if result["aadhaar"]:
+                st.markdown(f"✅ **Aadhaar:** {', '.join(result['aadhaar'])}")
+            if result["pan"]:
+                st.markdown(f"✅ **PAN:** {', '.join(result['pan'])}")
+            with st.expander("🔎 View Extracted Text"):
+                st.write(result["text"])
         else:
-            for file_path in files:
-                result = process_file(file_path, receiver_email)
-                if result:
-                    extracted_data.append(result)
-
-            if extracted_data:
-                st.success(f"✅ Found PII in {len(extracted_data)} files:")
-                for data in extracted_data:
-                    st.markdown(f"**File:** `{data['file_path']}`")
-                    if data["aadhaar"]:
-                        st.markdown(f"✅ **Aadhaar:** {', '.join(data['aadhaar'])}")
-                    if data["pan"]:
-                        st.markdown(f"✅ **PAN:** {', '.join(data['pan'])}")
-                    with st.expander("🔎 View Extracted Text"):
-                        st.write(data["text"])
-            else:
-                st.warning("❌ No Aadhaar or PAN details found in scanned files.")
+            st.warning("❌ No Aadhaar or PAN details found in the uploaded file.")
 
 # ---------------- Footer ----------------
 st.markdown("---")
