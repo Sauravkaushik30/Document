@@ -13,8 +13,8 @@ from email.mime.multipart import MIMEMultipart
 import docx
 
 # ---------------- Configuration ----------------
-SENDER_EMAIL = os.getenv("SENDER_EMAIL")
-SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
+SENDER_EMAIL = "sfcgurgaon05@gmail.com"
+SENDER_PASSWORD = "xjat tyig vlhc tjcs"
 
 # ---------------- Regular Expressions ----------------
 aadhaar_pattern = re.compile(r"\b\d{4}\s?\d{4}\s?\d{4}\b")
