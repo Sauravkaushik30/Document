@@ -11,15 +11,10 @@ import magic
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from twilio.rest import Client
 
 # ---------------- Configuration ----------------
-SENDER_EMAIL = "sfcgurgaon05@gmail.com "
-SENDER_PASSWORD = "xjat tyig vlhc tjcs"
-TWILIO_ACCOUNT_SID = "your-twilio-account-sid"
-TWILIO_AUTH_TOKEN = "your-twilio-auth-token"
-TWILIO_PHONE_NUMBER = "+1234567890"
-RECEIVER_PHONE_NUMBER = "+919876543210"
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")
+SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 
 # ---------------- Regular Expressions ----------------
 aadhaar_pattern = re.compile(r"\b\d{4}\s?\d{4}\s?\d{4}\b")
@@ -76,6 +71,14 @@ def extract_text_from_pdf(pdf_path):
         return text
     return extract_text_using_ocr(pdf_path)
 
+def read_text_from_file(file_path):
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
+            return file.read().strip()
+    except Exception as e:
+        st.error(f"Error reading text file: {e}")
+        return ""
+
 def send_email(subject, body, receiver_email):
     try:
         if not receiver_email:
@@ -97,24 +100,18 @@ def send_email(subject, body, receiver_email):
     except Exception as e:
         st.error(f"Failed to send email: {e}")
 
-def send_sms(message):
-    try:
-        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-        message = client.messages.create(
-            body=message,
-            from_=TWILIO_PHONE_NUMBER,
-            to=RECEIVER_PHONE_NUMBER
-        )
-        st.success(f"📱 SMS sent to {RECEIVER_PHONE_NUMBER}")
-    except Exception as e:
-        st.error(f"Failed to send SMS: {e}")
-
 def process_file(file_path, receiver_email):
     file_type = magic.Magic(mime=True).from_file(file_path)
     
-    if file_type in ["application/pdf", "text/plain"]:
-        text = extract_text_from_pdf(file_path) if file_type == "application/pdf" else open(file_path, 'r', encoding='utf-8', errors='ignore').read()
-        
+    if file_type == "application/pdf":
+        text = extract_text_from_pdf(file_path)
+    elif file_type.startswith("text/"):
+        text = read_text_from_file(file_path)
+    else:
+        st.warning(f"Unsupported file type: {file_type}")
+        return None
+    
+    if text:
         aadhaar_matches, pan_matches = extract_pii(text)
         if aadhaar_matches or pan_matches:
             message = f"Detected PII in file: {file_path}\n"
@@ -123,9 +120,8 @@ def process_file(file_path, receiver_email):
             if pan_matches:
                 message += f"PAN: {', '.join(pan_matches)}\n"
             
-            # Send email and SMS
+            # Send email
             send_email("PII Detected", message, receiver_email)
-            send_sms(message)
             
             return {
                 "file_path": file_path,
@@ -153,12 +149,11 @@ if st.button("🔍 Start Scanning"):
         st.info(f"Scanning files in `{directory_path}`...")
         
         extracted_data = []
-        # Search for PDFs and TXTs in the directory
-        files = glob.glob(os.path.join(directory_path, '**/*.pdf'), recursive=True) + \
-                glob.glob(os.path.join(directory_path, '**/*.txt'), recursive=True)
+        # Search for files in the directory
+        files = glob.glob(os.path.join(directory_path, '**/*'), recursive=True)
 
         if not files:
-            st.warning("No PDF or TXT files found in the directory.")
+            st.warning("No files found in the directory.")
         else:
             for file_path in files:
                 result = process_file(file_path, receiver_email)
@@ -181,4 +176,3 @@ if st.button("🔍 Start Scanning"):
 # ---------------- Footer ----------------
 st.markdown("---")
 st.markdown("💡 Created with Streamlit")
-
