@@ -11,8 +11,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # ---------------- Configuration ----------------
-SENDER_EMAIL = os.getenv("sfcgurgaon05@gmail.com")
-SENDER_PASSWORD = os.getenv("xjat tyig vlhc tjcs")
+SENDER_EMAIL = "sfcgurgaon05@gmail.com"
+SENDER_PASSWORD = "xjat tyig vlhc tjcs"
 
 # ---------------- Regular Expressions ----------------
 aadhaar_pattern = re.compile(r"\b\d{4}\s?\d{4}\s?\d{4}\b")
