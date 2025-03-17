@@ -11,9 +11,11 @@ import magic
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import time
+import threading
 
 # ---------------- Configuration ----------------
-SENDER_EMAIL = os.getenv("SENDER_EMAIL")  # Use environment variables for security
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")
 SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 
 # ---------------- Regular Expressions ----------------
@@ -120,7 +122,6 @@ def process_file(file_path, receiver_email):
             if pan_matches:
                 message += f"PAN: {', '.join(pan_matches)}\n"
             
-            # Send email
             send_email("PII Detected", message, receiver_email)
             
             return {
@@ -131,6 +132,26 @@ def process_file(file_path, receiver_email):
             }
     return None
 
+def scan_directory(directory, receiver_email):
+    extracted_data = []
+    
+    if not os.path.isdir(directory):
+        st.error(f"Invalid directory path: {directory}")
+        return extracted_data
+
+    files = glob.glob(os.path.join(directory, '**/*.*'), recursive=True)
+
+    if not files:
+        st.warning("No files found in the directory.")
+        return extracted_data
+
+    for file_path in files:
+        result = process_file(file_path, receiver_email)
+        if result:
+            extracted_data.append(result)
+
+    return extracted_data
+
 # ---------------- Streamlit UI ----------------
 st.set_page_config(page_title="Document PII Extractor", layout="wide")
 st.title("📑 Document PII Extractor")
@@ -140,9 +161,26 @@ st.markdown("### Scan an Entire Directory for Aadhaar and PAN Details")
 directory_path = st.text_input("📂 Enter the directory path to scan:")
 receiver_email = st.text_input("📧 Enter the recipient email for notifications:")
 
-# Fix for Windows paths (allow double backslashes or raw strings)
+# Fix path issues
 if directory_path:
     directory_path = os.path.normpath(directory_path)
+
+def start_rescan(interval, directory_path, receiver_email):
+    while True:
+        extracted_data = scan_directory(directory_path, receiver_email)
+        if extracted_data:
+            st.success(f"✅ Found PII in {len(extracted_data)} files.")
+            for data in extracted_data:
+                st.markdown(f"**File:** `{data['file_path']}`")
+                if data["aadhaar"]:
+                    st.markdown(f"✅ **Aadhaar:** {', '.join(data['aadhaar'])}")
+                if data["pan"]:
+                    st.markdown(f"✅ **PAN:** {', '.join(data['pan'])}")
+                with st.expander("🔎 View Extracted Text"):
+                    st.write(data["text"])
+        else:
+            st.warning("❌ No Aadhaar or PAN details found in scanned files.")
+        time.sleep(interval)
 
 if st.button("🔍 Start Scanning"):
     if not directory_path or not os.path.isdir(directory_path):
@@ -150,32 +188,8 @@ if st.button("🔍 Start Scanning"):
     elif not receiver_email:
         st.error("Recipient email is required.")
     else:
-        st.info(f"Scanning files in `{directory_path}`...")
-
-        extracted_data = []
-        # Search for files in the directory (recursive)
-        files = glob.glob(os.path.join(directory_path, '**/*.*'), recursive=True)
-
-        if not files:
-            st.warning("No files found in the directory.")
-        else:
-            for file_path in files:
-                result = process_file(file_path, receiver_email)
-                if result:
-                    extracted_data.append(result)
-
-            if extracted_data:
-                st.success(f"✅ Found PII in {len(extracted_data)} files:")
-                for data in extracted_data:
-                    st.markdown(f"**File:** `{data['file_path']}`")
-                    if data["aadhaar"]:
-                        st.markdown(f"✅ **Aadhaar:** {', '.join(data['aadhaar'])}")
-                    if data["pan"]:
-                        st.markdown(f"✅ **PAN:** {', '.join(data['pan'])}")
-                    with st.expander("🔎 View Extracted Text"):
-                        st.write(data["text"])
-            else:
-                st.warning("❌ No Aadhaar or PAN details found in scanned files.")
+        st.info(f"Starting scan on `{directory_path}` every 10 minutes...")
+        threading.Thread(target=start_rescan, args=(600, directory_path, receiver_email), daemon=True).start()
 
 # ---------------- Footer ----------------
 st.markdown("---")
