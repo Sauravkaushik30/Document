@@ -7,7 +7,7 @@ import pytesseract
 import pdfplumber
 from pdf2image import convert_from_bytes
 import pytesseract
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR'
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 
 # Function to extract text from various file types.
