@@ -7,3 +7,4 @@ python-magic==0.4.27
 twilio==8.8.0
 python-docx
 pdfplumber
+pdf2image
