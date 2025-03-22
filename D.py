@@ -1,163 +1,104 @@
 import streamlit as st
-import fitz  # PyMuPDF
+import pandas as pd
 import re
-import io
+from io import BytesIO
 from PIL import Image
 import pytesseract
-import PyPDF2
-import magic
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import pdfplumber
+from pdf2image import convert_from_bytes
 
-# ---------------- Configuration ----------------
-SENDER_EMAIL = "sfcgurgaon05@gmail.com"
-SENDER_PASSWORD = "xjat tyig vlhc tjcs"
+# Function to extract text from various file types.
+def extract_text(file, file_ext):
+    text = ""
+    # Process text files
+    if file_ext == 'txt':
+        text = file.read().decode('utf-8', errors='ignore')
+    # Process PDF files
+    elif file_ext == 'pdf':
+        try:
+            # First, try extracting text using pdfplumber.
+            with pdfplumber.open(file) as pdf:
+                pages_text = []
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        pages_text.append(page_text)
+                text = "\n".join(pages_text)
+        except Exception as e:
+            st.error(f"Error reading PDF file with pdfplumber: {e}")
 
-# ---------------- Regular Expressions ----------------
-aadhaar_pattern = re.compile(r"\b\d{4}\s?\d{4}\s?\d{4}\b")
-pan_pattern = re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b")
-
-# ---------------- Utility Functions ----------------
-def extract_pii(text):
-    aadhaar_matches = aadhaar_pattern.findall(text)
-    pan_matches = pan_pattern.findall(text)
-    return aadhaar_matches, pan_matches
-
-def extract_text_using_fitz(pdf_stream):
-    try:
-        doc = fitz.open(stream=pdf_stream, filetype="pdf")
-        text = ""
-        for page in doc:
-            text += page.get_text()
-        return text.strip()
-    except Exception as e:
-        st.error(f"Error extracting text using fitz: {e}")
-        return ""
-
-def extract_text_using_pypdf2(pdf_stream):
-    try:
-        reader = PyPDF2.PdfReader(pdf_stream)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() or ""
-        return text.strip()
-    except Exception as e:
-        st.error(f"Error extracting text using PyPDF2: {e}")
-        return ""
-
-def extract_text_using_ocr(pdf_stream):
-    try:
-        doc = fitz.open(stream=pdf_stream, filetype="pdf")
-        text = ""
-        for page in doc:
-            pix = page.get_pixmap()
-            img = Image.open(io.BytesIO(pix.tobytes("png")))
-            ocr_text = pytesseract.image_to_string(img)
-            text += ocr_text
-        return text.strip()
-    except Exception as e:
-        st.error(f"OCR failed: {e}")
-        return ""
-
-def extract_text_from_pdf(pdf_stream):
-    text = extract_text_using_fitz(pdf_stream)
-    if text:
-        return text
-    text = extract_text_using_pypdf2(pdf_stream)
-    if text:
-        return text
-    return extract_text_using_ocr(pdf_stream)
-
-def read_text_from_file(file_stream):
-    try:
-        text = file_stream.read().decode("utf-8").strip()
-        return text
-    except Exception as e:
-        st.error(f"Error reading text file: {e}")
-        return ""
-
-def send_email(subject, body, receiver_email):
-    try:
-        if not receiver_email:
-            st.error("Receiver email is required to send notifications.")
-            return
-        
-        msg = MIMEMultipart()
-        msg['From'] = SENDER_EMAIL
-        msg['To'] = receiver_email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'plain'))
-        
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(SENDER_EMAIL, SENDER_PASSWORD)
-        server.sendmail(SENDER_EMAIL, receiver_email, msg.as_string())
-        server.quit()
-        st.success(f"📧 Email sent to {receiver_email}")
-    except Exception as e:
-        st.error(f"Failed to send email: {e}")
-
-def process_file(file, receiver_email):
-    file_type = magic.Magic(mime=True).from_buffer(file.read(1024))
-    file.seek(0)  # Reset file pointer
-
-    if file_type == "application/pdf":
-        text = extract_text_from_pdf(file)
-    elif file_type.startswith("text/"):
-        text = read_text_from_file(file)
+        # If no text was extracted, assume PDF pages are images and use OCR.
+        if not text.strip():
+            try:
+                file.seek(0)  # Reset file pointer
+                pages = convert_from_bytes(file.read())
+                ocr_text = []
+                for page in pages:
+                    ocr_text.append(pytesseract.image_to_string(page))
+                text = "\n".join(ocr_text)
+            except Exception as e:
+                st.error(f"Error performing OCR on PDF file: {e}")
+    # Process image files (png, jpg, jpeg)
+    elif file_ext in ['png', 'jpg', 'jpeg']:
+        try:
+            image = Image.open(file)
+            text = pytesseract.image_to_string(image)
+        except Exception as e:
+            st.error(f"Error processing image file: {e}")
     else:
-        st.warning(f"Unsupported file type: {file_type}")
-        return None
+        st.warning("Unsupported file type!")
+    return text
+
+# Function to detect PII keywords based on regex patterns.
+def detect_pii(text):
+    pii_keywords = []
+    # PAN pattern: 5 uppercase letters, 4 digits, 1 uppercase letter.
+    pan_pattern = r'\b[A-Z]{5}[0-9]{4}[A-Z]\b'
+    # Aadhaar patterns: either 12 continuous digits or groups of 4 digits separated by spaces.
+    aadhaar_pattern1 = r'\b\d{4}\s\d{4}\s\d{4}\b'
+    aadhaar_pattern2 = r'\b\d{12}\b'
     
-    if text:
-        aadhaar_matches, pan_matches = extract_pii(text)
-        if aadhaar_matches or pan_matches:
-            message = f"Detected PII in uploaded file:\n"
-            if aadhaar_matches:
-                message += f"Aadhaar: {', '.join(aadhaar_matches)}\n"
-            if pan_matches:
-                message += f"PAN: {', '.join(pan_matches)}\n"
-            
-            # Send email
-            send_email("PII Detected", message, receiver_email)
-            
-            return {
-                "aadhaar": aadhaar_matches,
-                "pan": pan_matches,
-                "text": text
-            }
-    return None
+    if re.search(pan_pattern, text):
+        pii_keywords.append('PAN')
+    if re.search(aadhaar_pattern1, text) or re.search(aadhaar_pattern2, text):
+        pii_keywords.append('Aadhaar')
+    return pii_keywords
 
-# ---------------- Streamlit UI ----------------
-st.set_page_config(page_title="Document PII Extractor", layout="wide")
-st.title("📑 Document PII Extractor")
-st.markdown("### Upload a File to Scan for Aadhaar and PAN Details")
+# Streamlit app layout.
+st.title("Document PII Detector")
+st.write("Upload a document (text, PDF, or image) to detect PII such as PAN and Aadhaar numbers.")
 
-# Get file upload and email input from user
-uploaded_file = st.file_uploader("📂 Upload a file to scan:", type=["pdf", "txt"])
-receiver_email = st.text_input("📧 Enter the recipient email for notifications:")
+# File uploader accepts multiple files.
+uploaded_files = st.file_uploader("Choose files", accept_multiple_files=True)
 
-if st.button("🔍 Start Scanning"):
-    if not uploaded_file:
-        st.error("Please upload a file to scan.")
-    elif not receiver_email:
-        st.error("Recipient email is required.")
-    else:
-        st.info("Scanning the uploaded file...")
-        result = process_file(uploaded_file, receiver_email)
+results = []
 
-        if result:
-            st.success("✅ PII Detected in the uploaded file:")
-            if result["aadhaar"]:
-                st.markdown(f"✅ **Aadhaar:** {', '.join(result['aadhaar'])}")
-            if result["pan"]:
-                st.markdown(f"✅ **PAN:** {', '.join(result['pan'])}")
-            with st.expander("🔎 View Extracted Text"):
-                st.write(result["text"])
-        else:
-            st.warning("❌ No Aadhaar or PAN details found in the uploaded file.")
-
-# ---------------- Footer ----------------
-st.markdown("---")
-st.markdown("💡 Created with Streamlit")
+if uploaded_files:
+    for uploaded_file in uploaded_files:
+        file_details = {
+            "File Name": uploaded_file.name,
+            "File Type": uploaded_file.type
+        }
+        file_ext = uploaded_file.name.split('.')[-1].lower()
+        text = extract_text(uploaded_file, file_ext)
+        pii_found = detect_pii(text)
+        file_details["PII Detected"] = ", ".join(pii_found) if pii_found else "None"
+        results.append(file_details)
+    
+    # Create a DataFrame with the results.
+    df = pd.DataFrame(results)
+    st.write("Detection Results:")
+    st.dataframe(df)
+    
+    # Convert the DataFrame to an Excel file in memory.
+    towrite = BytesIO()
+    df.to_excel(towrite, index=False, engine='openpyxl')
+    towrite.seek(0)
+    
+    # Provide a download button for the Excel file.
+    st.download_button(
+        label="Download Excel",
+        data=towrite,
+        file_name="pii_detection_results.xlsx",
+        mime="application/vnd.ms-excel"
+    )
